@@ -113,6 +113,64 @@ SQLcl 26.2.2でDB未接続の生成・検証を確認済み。接続がない旨
 - 既存の認証・認可設定やアプリを保持し、編集後に再検証する。
 - パスワード、Walletの内容、秘密鍵、`~/.codex/auth.json` の内容を読み出してチャット・ソース・ログへ載せない。
 
+### 入力項目のラベルと値が重なる問題
+
+カスタムCSSでフォームを再デザインする場合、`@/required-floating` や `@/optional-floating` のフローティングラベルを使うと、入力済みの値や選択リストの値とラベルが重なることがある。
+
+- フォームを独自デザインにする場合、入力項目は原則 `@/optional-above` を使い、ラベルを入力欄の上に固定表示する。
+- 優先度・状態などの選択リストも同じ方式に統一する。
+- CSSだけでフローティングラベルの位置を補正しない。実行時のDOM構造やテーマCSSにより、セレクタが効かない場合がある。
+- 必須制約はラベルテンプレートではなく、`validation { valueRequired: true }` で維持する。
+- 編集後は、空欄時と値入力・選択後の両方をブラウザで確認する。
+
+### モーダルフォームで登録しても一覧へ反映されない問題
+
+APEXlangのモーダルフォームでは、ボタンの `databaseAction: insert` だけでは十分ではない。フォームの初期化・保存・ダイアログ終了を明示するプロセスが必要である。
+
+フォームページには、次の3プロセスを必ず定義する。
+
+```apexlang
+process initialize-record (
+    name: レコード初期化
+    type: formInitialization
+    formRegion: @form-region
+    execution {
+        sequence: 10
+        point: beforeHeader
+    }
+)
+
+process process-record (
+    name: レコード保存
+    type: formAutoRowProcessing
+    formRegion: @form-region
+    execution {
+        sequence: 10
+    }
+    successMessage {
+        successMessage: 保存しました。
+    }
+)
+
+process close-dialog (
+    name: ダイアログを閉じる
+    type: closeDialog
+    execution {
+        sequence: 50
+    }
+    serverSideCondition {
+        type: requestIsContainedInValue
+        value: CREATE,SAVE,DELETE
+    }
+)
+```
+
+- `formAutoRowProcessing` がないと、保存成功のように見えてもDBへ登録・更新されない。
+- `closeDialog` がないと、保存後に親画面の `apexafterclosedialog` が発火せず、一覧・サマリーが更新されない。
+- 親画面では、モーダルを開くボタンまたはリンクが属するリージョンごとに `apexafterclosedialog` を監視し、一覧リージョンを `refresh` する。
+- 新規登録ボタンと一覧内の編集リンクで親リージョンが異なる場合は、それぞれに更新用のDynamic Actionを定義する。
+- 検証は `apex validate` だけで完了とせず、実際に「登録 → ダイアログが閉じる → 一覧に新規行が表示される」までブラウザで確認する。
+
 編集後の検証はVMのBashからCodex自身が実行する：
 
 ```bash
