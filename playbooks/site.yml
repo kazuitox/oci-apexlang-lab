@@ -1,0 +1,169 @@
+---
+- name: Configure and verify the APEXlang development VM
+  hosts: all
+  gather_facts: true
+  vars:
+    app_dir: /opt/apexlang
+    state_dir: /var/lib/apexlang
+    dev_home: /home/opc
+    # Keep only application settings; no Terraform ADMIN password or SSH private key.
+    application_config:
+      adb_ocid: "{{ adb_ocid }}"
+      adb_name: "{{ adb_name }}"
+      region: "{{ region }}"
+      auto_wallet: "{{ auto_wallet }}"
+      initialize_apex: "{{ initialize_apex }}"
+      apex_schema: "{{ apex_schema }}"
+      apex_workspace: "{{ apex_workspace }}"
+      apex_user: "{{ apex_user }}"
+      codex_version: "{{ codex_version }}"
+      sqlcl_version: "{{ sqlcl_version }}"
+      sqlcl_url: "{{ sqlcl_url }}"
+      java_url: "{{ java_url }}"
+      oracle_skills_url: "{{ oracle_skills_url }}"
+      oracle_skills_revision: "{{ oracle_skills_revision }}"
+  tasks:
+    - name: Validate Oracle Linux 8 on Arm64
+      ansible.builtin.assert:
+        that:
+          - ansible_facts.architecture == "aarch64"
+          - ansible_facts.distribution == "OracleLinux"
+          - ansible_facts.distribution_major_version == "8"
+
+    - name: Prepare application directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+      loop: ["{{ app_dir }}", "{{ state_dir }}", /etc/apexlang]
+
+    - name: Mark tool verification as pending for this run
+      ansible.builtin.file:
+        path: "{{ state_dir }}/tools.ready"
+        state: absent
+
+    - name: Write database configuration
+      ansible.builtin.copy:
+        content: "{{ application_config | to_nice_json }}\n"
+        dest: /etc/apexlang/config.json
+        owner: root
+        group: root
+        mode: "0644"
+      register: config_copy
+
+    - name: Install VM connection and verification helpers
+      ansible.builtin.copy:
+        src: "../vm/{{ item }}"
+        dest: "{{ app_dir }}/{{ item }}"
+        owner: root
+        group: root
+        mode: "0755"
+      loop: [fetch-wallet.py, adb-connect, apexlang-status, verify-adb-network.py, bootstrap-apex.py]
+
+    - name: Install SDK requirements and APEX verification SQL
+      ansible.builtin.copy:
+        src: "{{ item.src }}"
+        dest: "{{ app_dir }}/{{ item.dest }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - {src: ../vm/requirements.txt, dest: requirements.txt}
+        - {src: ../sql/verify-apex.sql, dest: verify-apex.sql}
+
+    - name: Install development tools
+      ansible.builtin.import_tasks: tools.yml
+
+    - name: Verify installed tool versions
+      ansible.builtin.command:
+        argv: "{{ item }}"
+      register: tool_versions
+      changed_when: false
+      loop:
+        - ["{{ app_dir }}/jdk/bin/java", -version]
+        - [/usr/sbin/runuser, -u, opc, --, /usr/local/bin/sql, -version]
+        - [/usr/bin/node, --version]
+        - [/usr/sbin/runuser, -u, opc, --, "{{ dev_home }}/.local/bin/codex", --version]
+
+    - name: Show verified tool versions in Resource Manager
+      ansible.builtin.debug:
+        msg: "{{ item.stdout ~ item.stderr }}"
+      loop: "{{ tool_versions.results }}"
+      loop_control:
+        label: "{{ item.item | join(' ') }}"
+
+    - name: Record verified tool versions
+      ansible.builtin.copy:
+        content: "{{ tool_versions.results | map(attribute='stdout') | join('\n') }}\n{{ tool_versions.results | map(attribute='stderr') | join('\n') }}\n"
+        dest: "{{ state_dir }}/tool-versions.txt"
+        mode: "0644"
+
+    - name: Verify SQLcl starts and executes commands as opc
+      become: true
+      become_user: opc
+      ansible.builtin.command:
+        argv: [/usr/bin/timeout, 60s, /usr/local/bin/sql, -s, -L, /nolog]
+        chdir: "{{ dev_home }}"
+        stdin: |
+          prompt APEXLANG_SQLCL_READY
+          exit
+      environment:
+        HOME: "{{ dev_home }}"
+        LANG: en_US.UTF-8
+        LC_ALL: en_US.UTF-8
+      register: sqlcl_startup
+      changed_when: false
+      failed_when: sqlcl_startup.rc != 0 or 'APEXLANG_SQLCL_READY' not in sqlcl_startup.stdout_lines
+
+    - name: Report SQLcl startup verification in Resource Manager
+      ansible.builtin.debug:
+        msg: "SQLcl startup as opc: APEXLANG_SQLCL_READY (no database login)"
+
+    - name: Mark verified tools ready
+      ansible.builtin.copy:
+        content: "ready\n"
+        dest: "{{ state_dir }}/tools.ready"
+        mode: "0644"
+
+    - name: Check existing wallet readiness
+      ansible.builtin.stat:
+        path: "{{ state_dir }}/wallet.ready"
+      register: wallet_marker
+
+    - name: Remove outdated wallet readiness after database configuration changes
+      ansible.builtin.file:
+        path: "{{ state_dir }}/wallet.ready"
+        state: absent
+      when: config_copy.changed
+
+    - name: Acquire this database wallet with bounded retries
+      tags: [apexlang_wallet]
+      ansible.builtin.command:
+        argv: ["{{ app_dir }}/venv/bin/python", "{{ app_dir }}/fetch-wallet.py", --force]
+      register: wallet_download
+      # rc=2 means invalid wallet data: stop retrying and fail this task.
+      until: wallet_download.rc in [0, 2]
+      failed_when: wallet_download.rc != 0
+      retries: 120
+      delay: 30
+      when: auto_wallet | bool and (config_copy.changed or not wallet_marker.stat.exists)
+
+    - name: Verify wallet service and ADB TCP 1522 reachability
+      ansible.builtin.command:
+        argv: [/usr/bin/python3.11, "{{ app_dir }}/verify-adb-network.py"]
+      register: network_check
+      until: network_check.rc == 0
+      retries: 6
+      delay: 10
+      changed_when: false
+      when: auto_wallet | bool
+
+    - name: Report tool and wallet preparation to Resource Manager
+      ansible.builtin.debug:
+        msg: "{{ 'Tools and wallet READY; ADB TCP 1522 verified.' if auto_wallet | bool else 'Tools READY; manual wallet required.' }}"
+
+    - name: Initialize APEX schema, workspace and developer account
+      ansible.builtin.import_tasks: apex.yml
+      when: initialize_apex | bool

@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+set -u
+status=0
+for component in tools wallet; do
+  if [[ -f "/var/lib/apexlang/$component.ready" ]]; then
+    printf '%s: READY\n' "$component"
+  else
+    printf '%s: NOT READY\n' "$component"
+    status=1
+  fi
+done
+if [[ -r /var/lib/apexlang/tool-versions.txt ]]; then
+  cat /var/lib/apexlang/tool-versions.txt
+fi
+printf '\nDiagnostics: Resource Manager Apply log, or sudo tail -n 80 /var/log/apexlang-ansible.log\n'
+if /usr/bin/python3.11 - <<'PY'
+import json
+from pathlib import Path
+config = json.loads(Path('/etc/apexlang/config.json').read_text())
+if not config.get('initialize_apex', False):
+    print('apex: AUTO INITIALIZATION DISABLED')
+    raise SystemExit(0)
+try:
+    ready = json.loads(Path('/var/lib/apexlang/apex-ready.json').read_text())
+    assert ready['adb_ocid'] == config['adb_ocid']
+    assert ready['adb_name'] == config['adb_name']
+    assert ready['database_login_verified'] and ready['apex_account_password_verified']
+except (OSError, ValueError, KeyError, AssertionError):
+    print('apex: NOT READY')
+    raise SystemExit(1)
+print('apex: READY (last verified: ' + ready['verified_at'] + ')')
+print('Workspace / DB schema / APEX user: APEXLAB')
+print('Initial password: same as the RM ADB ADMIN password; browser login not tested')
+PY
+then :; else status=1; fi
+printf '\nNext: codex login --device-auth; cd ~/projects/apex-study; codex\n'
+exit "$status"

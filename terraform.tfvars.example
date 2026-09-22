@@ -1,0 +1,18 @@
+# Resource Managerではschema.yamlの入力フォームを使用します。
+# このファイルは入力値の説明用です。実際のパスワード・鍵は記載していません。
+# Resource Managerが tenancy_ocid / compartment_ocid / region を設定します。
+name_prefix          = "apexlang"
+use_always_free      = false # 大阪等の非ホームリージョンで有料構成を使う場合。
+availability_domain  = "<選択した可用性ドメイン>"
+image_ocid           = "ocid1.image.<OL8.10-aarch64の実際のOCID>"
+ssh_public_key       = "<OpenSSH形式の公開鍵>"
+allowed_client_cidrs = "203.0.113.10/32,198.51.100.0/24" # 説明用。実際の接続元に変更。
+vcn_cidr             = "10.60.0.0/16"
+generate_adb_name    = true # Prefixの一部＋stateに保存した8桁の乱数で自動生成。
+adb_name             = "APEXLANG" # generate_adb_name = false の場合だけ使用。
+adb_version          = "26ai"
+create_wallet_iam    = true
+initialize_apex      = true # APEXLABのDB/Workspace/APEXユーザーを自動作成。
+codex_version        = "latest"
+provision_revision   = "1"
+# adb_admin_password はResource Managerで指定。APEXLABの初期パスワードにも共用します。

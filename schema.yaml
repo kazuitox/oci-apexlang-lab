@@ -1,0 +1,211 @@
+title: APEXlang Learning Lab on OCI
+description: >-
+  有料またはAlways Free ADB + Oracle Linux 8 Arm64 VM (2 OCPU / 12 GB)。
+  AnsibleでSQLcl・Codex CLI・APEXLABスキーマ・Workspace・APEXユーザーを準備し、進捗と成否をApplyログで確認できます。
+  既定は有料ADB 2 ECPU / 20 GB。Always Free選択時だけホームリージョンが必要です。
+schemaVersion: 1.1.0
+version: "1.5.1"
+variableGroups:
+  - title: 配置先
+    variables:
+      - compartment_ocid
+      - use_always_free
+      - name_prefix
+      - availability_domain
+      - image_ocid
+  - title: 接続許可
+    variables:
+      - ssh_public_key
+      - allowed_client_cidrs
+      - vcn_cidr
+  - title: Autonomous Database
+    variables:
+      - generate_adb_name
+      - adb_name
+      - adb_version
+      - adb_admin_password
+      - create_wallet_iam
+      - initialize_apex
+  - title: 開発ツール
+    variables:
+      - codex_version
+      - provision_revision
+  - title: Resource Managerの自動設定
+    visible: false
+    variables:
+      - tenancy_ocid
+      - region
+variables:
+  tenancy_ocid:
+    type: string
+    visible: false
+  region:
+    type: oci:identity:region:name
+    visible: false
+  compartment_ocid:
+    type: oci:identity:compartment:id
+    title: リソースを作成するコンパートメント
+    required: true
+  use_always_free:
+    type: boolean
+    title: Always Free構成を使用する
+    description: >-
+      既定は無効（有料）。大阪などホームリージョン以外では無効にしてください。
+      無効時は有料ADB 2 ECPU / 20 GBを作成します。
+      有効時はホームリージョンのAlways Free ADBを作成します。
+    default: false
+  name_prefix:
+    type: string
+    title: リソース名のPrefix（接頭辞）
+    description: >-
+      ADBの自動名にも使用します。複数スタックではIAM名の重複を避けるため別のPrefixを入力してください。
+      既存スタックの更新では現在の値を維持してください。
+    default: apexlang
+    required: true
+    pattern: "^[a-z][a-z0-9-]{2,19}$"
+  availability_domain:
+    type: oci:identity:availabilitydomain:name
+    title: A1 VMの可用性ドメイン
+    required: true
+    dependsOn:
+      compartmentId: compartment_ocid
+  image_ocid:
+    type: oci:core:image:id
+    title: Oracle Linux 8.10 aarch64イメージ
+    description: Oracle提供の標準OL8.10 aarch64イメージ（UEK7）を選択。選択したOCIDを固定します。
+    required: true
+    dependsOn:
+      compartmentId: compartment_ocid
+      operatingSystem: "Oracle Linux"
+      operatingSystemVersion: "8"
+      shape: "VM.Standard.A1.Flex"
+  ssh_public_key:
+    type: string
+    title: opcユーザー用SSH公開鍵
+    description: ssh-ed25519 / ssh-rsaなどで始まる公開鍵を1行で貼り付けてください。
+    required: true
+  allowed_client_cidrs:
+    type: string
+    title: インターネットからの接続元IPv4 CIDR
+    description: >-
+      必須。例 203.0.113.10/32。複数はカンマ区切り。
+      自宅・会社の実際のグローバルIPへ置き換えてください。
+      SSHおよびADBのSQL/APEXに共通適用。0.0.0.0/0は禁止。
+    required: true
+  vcn_cidr:
+    type: string
+    title: VCNのIPv4 CIDR（/16）
+    default: 10.60.0.0/16
+    required: true
+  generate_adb_name:
+    type: boolean
+    title: ADB名を自動生成する（Prefix＋ランダム値）
+    description: >-
+      既定は有効。表示名はAPEXLANG-3F82C901の形式。接続用の内部名は英数字のみで最大14文字です。
+      再Applyでも同じ乱数を維持します。
+      固定名を使う場合は無効にして、未使用の名前を入力してください。
+    default: true
+  adb_name:
+    type: string
+    title: 固定データベース名（自動生成が無効の場合のみ）
+    description: 同一テナンシ・リージョン全体で一意。自動生成が有効の場合、この値は使用しません。
+    visible:
+      not:
+        - generate_adb_name
+    default: APEXLANG
+    required: true
+    pattern: "^[A-Za-z][A-Za-z0-9]{0,13}$"
+  adb_version:
+    type: enum
+    title: データベースバージョン
+    description: APEXlangにはAPEX 26.1以降が必要です。作成後にAPEXバージョンを確認してください。
+    enum: ["26ai", "19c"]
+    default: "26ai"
+    required: true
+  adb_admin_password:
+    type: password
+    title: 共通の初期パスワード（ADB ADMIN / APEXLAB）
+    description: 12〜30文字。大文字・小文字・数字を含め、二重引用符・制御文字・admin・apexlabは使用不可。APEXLABのDB/APEXユーザーにも使用。初期化中のみVMへ渡し、Terraform stateにも保存されます。
+    required: true
+    confirmation: true
+    minLength: 12
+    maxLength: 30
+  create_wallet_iam:
+    type: boolean
+    title: Wallet自動取得用Dynamic Group・Policyを作成
+    description: Dynamic Group作成権限が必要です。VMには当該DBのWallet取得だけを許可。無効時はWalletを手動配置してください。
+    default: true
+  codex_version:
+    type: string
+    title: Codex CLIのバージョン
+    description: latestまたは公式インストーラーで提供される固定バージョンを指定。
+    default: latest
+    required: true
+  initialize_apex:
+    type: boolean
+    title: APEXLABのスキーマ・Workspace・APEXユーザーを自動作成
+    description: 既定は有効。すべてAPEXLABという名前で作成し、上のADMINパスワードを共用します。Wallet自動取得が必要。無効時は初回設定を手動で行ってください。
+    default: true
+  provision_revision:
+    type: string
+    title: Ansible再実行番号
+    description: 通常は1。同じ構成で再実行したいときだけ変更。失敗後は再Applyだけで再試行します。
+    default: "1"
+    required: true
+outputGroups:
+  - title: 接続先と初期確認
+    outputs:
+      - ssh_command
+      - vm_public_ip
+      - apex_url
+      - apex_login
+      - database_actions_url
+      - adb_low_service
+      - adb_database_name
+      - adb_display_name
+      - adb_ocid
+      - wallet_iam_enabled
+      - deployment_mode
+      - next_steps
+      - codex_start_command
+      - provisioning_status
+outputs:
+  ssh_command:
+    type: copyableString
+    title: SSH接続コマンド
+  vm_public_ip:
+    type: copyableString
+    title: VMの公開IP
+  apex_url:
+    type: link
+    title: APEX
+  database_actions_url:
+    type: link
+    title: Database Actions
+  adb_low_service:
+    type: copyableString
+    title: SQLclのサービス名
+  adb_database_name:
+    type: copyableString
+    title: 実際のデータベース名
+  adb_display_name:
+    type: copyableString
+    title: データベース表示名（ハイフン付き）
+  adb_ocid:
+    type: copyableString
+    title: ADB OCID
+  wallet_iam_enabled:
+    type: string
+    title: Wallet自動取得の有効化
+  deployment_mode:
+    type: string
+    title: 料金モード
+  next_steps:
+    type: string
+    title: 作成後の手順
+  codex_start_command:
+    type: copyableString
+    title: VMでのCodex起動コマンド
+  provisioning_status:
+    type: string
+    title: Ansible構成結果

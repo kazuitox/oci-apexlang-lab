@@ -1,0 +1,26 @@
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfplan
+*.tfvars
+*.tfvars.json
+!terraform.tfvars.example
+crash.log
+crash.*.log
+dist/
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+Wallet*.zip
+wallet*.zip
+*.pem
+*.key
+*.p12
+*.sso
+.env
+.env.*
+!.env.example
+# VM上で生成する学習アプリや接続設定は配布対象にしない。
+apex-study/*
+!apex-study/AGENTS.md

@@ -1,0 +1,5 @@
+PyYAML==6.0.3
+python-hcl2==8.1.4
+jsonschema==4.26.0
+ansible-core==2.19.8
+-r ../vm/requirements.txt

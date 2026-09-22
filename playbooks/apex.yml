@@ -1,0 +1,39 @@
+---
+- name: Clear previous APEX initialization verification
+  ansible.builtin.file:
+    path: "{{ state_dir }}/apex-ready.json"
+    state: absent
+
+- name: Install APEX initialization SQL templates (no passwords)
+  ansible.builtin.copy:
+    src: "../sql/{{ item }}"
+    dest: "{{ app_dir }}/bootstrap-sql/"
+    owner: root
+    group: root
+    mode: "0644"
+    directory_mode: "0755"
+  loop:
+    - bootstrap-preflight.sql
+    - bootstrap-schema.sql
+    - bootstrap-workspace.sql
+    - bootstrap-account.sql
+    - bootstrap-verify.sql
+
+- name: Run and verify each APEX initialization stage
+  ansible.builtin.include_tasks: apex-step.yml
+  loop: [preflight, schema, workspace, account, verify]
+  loop_control:
+    loop_var: apex_stage
+    label: "{{ apex_stage }}"
+
+- name: Record verified APEX environment without credentials
+  ansible.builtin.copy:
+    content: "{{ {'adb_ocid': adb_ocid, 'adb_name': adb_name, 'schema': apex_schema, 'workspace': apex_workspace, 'apex_user': apex_user, 'verified_at': now(utc=true, fmt='%Y-%m-%dT%H:%M:%SZ'), 'database_login_verified': true, 'apex_account_password_verified': true, 'browser_login_verified': false} | to_nice_json }}\n"
+    dest: "{{ state_dir }}/apex-ready.json"
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Report APEX initialization completion to Resource Manager
+  ansible.builtin.debug:
+    msg: "APEX READY: schema=APEXLAB workspace=APEXLAB APEX-user=APEXLAB; database login and APEX account password verified. Initial passwords match the RM ADB ADMIN password. Browser sign-in has not been tested."

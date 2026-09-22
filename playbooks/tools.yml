@@ -1,0 +1,273 @@
+---
+# OL8's python3-dnf belongs to platform Python 3.6. Run dnf as a command instead
+# of importing it from the Python 3.11 interpreter used by current Ansible.
+- name: Install OS packages
+  ansible.builtin.command:
+    argv: [dnf, -y, install, curl, ca-certificates, unzip, tar, gzip, git, python3.11, python3.11-pip]
+  register: packages
+  changed_when: "'Nothing to do' not in packages.stdout"
+  retries: 3
+  delay: 10
+  until: packages.rc == 0
+
+- name: Enable Node.js 22 from OL8 AppStream
+  ansible.builtin.shell: |
+    set -euo pipefail
+    if ! dnf -q module list --enabled nodejs | awk '$1 == "nodejs" && $2 ~ /^22/ { found=1 } END { exit !found }'; then
+      dnf -y module reset nodejs
+      dnf -y module enable nodejs:22
+      echo STREAM_CHANGED
+    fi
+  args:
+    executable: /bin/bash
+  register: node_stream
+  changed_when: "'STREAM_CHANGED' in node_stream.stdout"
+
+- name: Install Node.js 22
+  ansible.builtin.command:
+    argv: [dnf, -y, install, nodejs]
+  register: node_package
+  changed_when: "'Nothing to do' not in node_package.stdout"
+  retries: 3
+  delay: 10
+  until: node_package.rc == 0
+
+- name: Check Oracle JDK installation
+  ansible.builtin.stat:
+    path: "{{ app_dir }}/jdk/bin/java"
+  register: java_binary
+
+- name: Check SQLcl installation
+  ansible.builtin.stat:
+    path: "{{ app_dir }}/sqlcl/bin/sql"
+  register: sql_binary
+
+- name: Create temporary download directory
+  ansible.builtin.tempfile:
+    state: directory
+    prefix: apexlang-download-
+  register: download_directory
+
+- name: Install Oracle JDK and SQLcl
+  block:
+    - name: Download Oracle JDK 21 Arm64 with publisher SHA256 verification
+      ansible.builtin.get_url:
+        url: "{{ java_url }}"
+        dest: "{{ download_directory.path }}/jdk.tar.gz"
+        checksum: "sha256:{{ java_url }}.sha256"
+        mode: "0600"
+        timeout: 900
+      when: not java_binary.stat.exists
+
+    - name: Prepare JDK extraction directory
+      ansible.builtin.file:
+        path: "{{ download_directory.path }}/jdk"
+        state: directory
+        mode: "0755"
+      when: not java_binary.stat.exists
+
+    - name: Extract Oracle JDK
+      ansible.builtin.unarchive:
+        src: "{{ download_directory.path }}/jdk.tar.gz"
+        dest: "{{ download_directory.path }}/jdk"
+        remote_src: true
+        extra_opts: [--strip-components=1]
+      when: not java_binary.stat.exists
+
+    - name: Verify downloaded JDK
+      ansible.builtin.command: "{{ download_directory.path }}/jdk/bin/java -version"
+      changed_when: false
+      when: not java_binary.stat.exists
+
+    - name: Move verified JDK into place
+      ansible.builtin.command:
+        argv: [mv, "{{ download_directory.path }}/jdk", "{{ app_dir }}/jdk"]
+      when: not java_binary.stat.exists
+
+    - name: Download SQLcl ZIP for the Arm64 JDK
+      ansible.builtin.get_url:
+        url: "{{ sqlcl_url }}"
+        dest: "{{ download_directory.path }}/sqlcl.zip"
+        mode: "0600"
+        timeout: 900
+      when: not sql_binary.stat.exists
+
+    - name: Extract SQLcl
+      ansible.builtin.unarchive:
+        src: "{{ download_directory.path }}/sqlcl.zip"
+        dest: "{{ download_directory.path }}"
+        remote_src: true
+      when: not sql_binary.stat.exists
+
+    - name: Verify downloaded SQLcl
+      ansible.builtin.command: "{{ download_directory.path }}/sqlcl/bin/sql -version"
+      environment:
+        JAVA_HOME: "{{ app_dir }}/jdk"
+        PATH: "{{ app_dir }}/jdk/bin:/usr/local/bin:/usr/bin:/bin"
+      changed_when: false
+      when: not sql_binary.stat.exists
+
+    - name: Move verified SQLcl into place
+      ansible.builtin.command:
+        argv: [mv, "{{ download_directory.path }}/sqlcl", "{{ app_dir }}/sqlcl"]
+      when: not sql_binary.stat.exists
+  always:
+    - name: Remove temporary downloads
+      ansible.builtin.file:
+        path: "{{ download_directory.path }}"
+        state: absent
+
+# The upstream ZIP contains 0640 JARs. Root can launch them, but opc cannot.
+- name: Make SQLcl distribution readable by development users
+  ansible.builtin.file:
+    path: "{{ app_dir }}/sqlcl"
+    state: directory
+    recurse: true
+    owner: root
+    group: root
+    mode: "u=rwX,go=rX"
+
+- name: Install SQLcl launcher
+  ansible.builtin.copy:
+    content: |
+      #!/usr/bin/env bash
+      export JAVA_HOME=/opt/apexlang/jdk
+      export PATH="$JAVA_HOME/bin:$PATH"
+      exec /opt/apexlang/sqlcl/bin/sql "$@"
+    dest: /usr/local/bin/sql
+    mode: "0755"
+
+- name: Install OCI SDK into the application virtual environment
+  ansible.builtin.pip:
+    requirements: "{{ app_dir }}/requirements.txt"
+    virtualenv: "{{ app_dir }}/venv"
+    virtualenv_command: /usr/bin/python3.11 -m venv
+  register: sdk_install
+  until: sdk_install is succeeded
+  retries: 3
+  delay: 10
+
+- name: Download official Codex CLI installer
+  ansible.builtin.get_url:
+    url: https://chatgpt.com/codex/install.sh
+    dest: "{{ app_dir }}/codex-install.sh"
+    mode: "0755"
+    timeout: 120
+
+- name: Install Codex CLI as opc
+  become: true
+  become_user: opc
+  ansible.builtin.command:
+    argv: [sh, "{{ app_dir }}/codex-install.sh"]
+  environment:
+    HOME: "{{ dev_home }}"
+    CODEX_NON_INTERACTIVE: "true"
+    CODEX_RELEASE: "{{ codex_version }}"
+
+- name: Prepare opc development directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: opc
+    group: opc
+    mode: "0755"
+  loop:
+    - "{{ dev_home }}/.local/share"
+    - "{{ dev_home }}/.agents/skills"
+    - "{{ dev_home }}/projects"
+
+- name: Install Oracle APEXlang skills
+  become: true
+  become_user: opc
+  ansible.builtin.git:
+    repo: "{{ oracle_skills_url }}"
+    dest: "{{ dev_home }}/.local/share/oracle-skills"
+    version: "{{ oracle_skills_revision }}"
+    # Fetch the exact object even from a shallow clone of an unrelated default branch.
+    refspec: "{{ oracle_skills_revision }}"
+    depth: 1
+    update: true
+    force: false
+  register: oracle_skills_checkout
+
+- name: Report Oracle APEXlang skill revision
+  ansible.builtin.debug:
+    msg: "Oracle APEXlang skills: requested={{ oracle_skills_revision }}, checked_out={{ oracle_skills_checkout.after }}"
+
+- name: Verify the APEXlang skill entry point
+  ansible.builtin.stat:
+    path: "{{ dev_home }}/.local/share/oracle-skills/apex/apexlang/SKILL.md"
+  register: skill_file
+
+- name: Require the APEXlang skill
+  ansible.builtin.assert:
+    that:
+      - oracle_skills_checkout.after == oracle_skills_revision
+      - skill_file.stat.isreg | default(false)
+    fail_msg: >-
+      APEXlang skill verification failed: requested={{ oracle_skills_revision }},
+      checked_out={{ oracle_skills_checkout.after }},
+      expected={{ dev_home }}/.local/share/oracle-skills/apex/apexlang/SKILL.md.
+
+- name: Record Oracle APEXlang skill revision
+  ansible.builtin.copy:
+    content: "{{ oracle_skills_checkout.after }}\n"
+    dest: "{{ state_dir }}/oracle-skills-commit.txt"
+    mode: "0644"
+
+- name: Register the Oracle APEXlang skill
+  ansible.builtin.file:
+    src: "{{ dev_home }}/.local/share/oracle-skills/apex/apexlang"
+    dest: "{{ dev_home }}/.agents/skills/apexlang"
+    state: link
+    owner: opc
+    group: opc
+
+- name: Install interactive shell environment
+  ansible.builtin.copy:
+    content: |
+      export LANG=en_US.UTF-8
+      export LC_ALL=en_US.UTF-8
+      export JAVA_HOME=/opt/apexlang/jdk
+      export PATH="$HOME/.local/bin:$JAVA_HOME/bin:/usr/local/bin:$PATH"
+    dest: /etc/profile.d/apexlang.sh
+    mode: "0644"
+
+- name: Set the default locale for opc Bash sessions
+  ansible.builtin.blockinfile:
+    path: "{{ dev_home }}/.bashrc"
+    create: true
+    owner: opc
+    group: opc
+    mode: "0644"
+    marker: "# {mark} APEXLANG LOCALE"
+    block: |
+      export LANG=en_US.UTF-8
+      export LC_ALL=en_US.UTF-8
+
+- name: Install connection helper links
+  ansible.builtin.file:
+    src: "{{ app_dir }}/{{ item.source }}"
+    dest: "/usr/local/bin/{{ item.name }}"
+    state: link
+  loop:
+    - {source: adb-connect, name: adb-connect}
+    - {source: apexlang-status, name: apexlang-status}
+    - {source: fetch-wallet.py, name: apexlang-fetch-wallet}
+
+- name: Prepare the APEX application workspace
+  ansible.builtin.file:
+    path: "{{ dev_home }}/projects/apex-study"
+    state: directory
+    owner: opc
+    group: opc
+    mode: "0755"
+
+- name: Seed Codex project instructions without overwriting user edits
+  ansible.builtin.copy:
+    src: ../apex-study/AGENTS.md
+    dest: "{{ dev_home }}/projects/apex-study/AGENTS.md"
+    owner: opc
+    group: opc
+    mode: "0644"
+    force: false

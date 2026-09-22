@@ -1,0 +1,30 @@
+---
+- name: "APEX {{ apex_stage }} - execute SQLcl with protected input"
+  become: true
+  become_user: opc
+  ansible.builtin.command:
+    argv: [/usr/bin/python3.11, "{{ app_dir }}/bootstrap-apex.py", "{{ apex_stage }}"]
+    stdin: "{{ lookup('ansible.builtin.file', bootstrap_secrets_file) }}"
+  environment:
+    HOME: "{{ dev_home }}"
+    LANG: en_US.UTF-8
+    LC_ALL: en_US.UTF-8
+  register: apex_execution
+  no_log: true
+  changed_when: false
+  failed_when: false
+
+- name: "APEX {{ apex_stage }} - check sanitized result"
+  ansible.builtin.assert:
+    that:
+      - apex_execution.rc == 0
+      - (apex_execution.stdout | from_json).ok | bool
+    # Export error identifiers only, never the SQLcl output or the input variables.
+    fail_msg: "APEX stage {{ apex_stage }} failed. Codes: {{ apex_execution.stdout | default('') | regex_findall('(?:ORA|PLS|SP2)-[0-9]{4,5}') | unique | join(', ') }}. Check the stage and the error-code guide in README."
+    success_msg: "APEX stage {{ apex_stage }} verified"
+    quiet: true
+
+- name: "APEX {{ apex_stage }} - report change status"
+  ansible.builtin.debug:
+    msg: "APEX stage {{ apex_stage }}: {{ 'created or configured' if (apex_execution.stdout | from_json).changed else 'verified without changes' }}"
+  changed_when: (apex_execution.stdout | from_json).changed | bool
