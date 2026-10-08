@@ -1,6 +1,6 @@
 locals {
   # An IGW connection is seen by the ADB as the VM's public source address.
-  adb_allowed_cidrs = distinct(concat(local.allowed_cidrs, ["${oci_core_instance.dev.public_ip}/32"]))
+  adb_allowed_cidrs = contains(local.allowed_cidrs, "0.0.0.0/0") ? ["0.0.0.0/0"] : distinct(concat(local.allowed_cidrs, ["${oci_core_instance.dev.public_ip}/32"]))
 }
 
 resource "oci_database_autonomous_database" "lab" {

@@ -35,7 +35,7 @@ flowchart LR
     V -->|HTTPS 443| O[OpenAI / 配布サイト]
 ```
 
-ADBは公開エンドポイントです。ADBのアクセス制御リスト（ACL）へ、入力した外部接続元CIDRと **VMの公開IPv4 /32** を設定します。VMからADBへの通信はInternet Gatewayを経由します。VMを置換して公開IPが変わった場合も、同じApplyでADB ACLを更新します。ADBアクセスの可否はVMのSecurity Listだけでなく、このADB側ACLでも制御します。
+ADBは公開エンドポイントです。ADBのアクセス制御リスト（ACL）へ、入力した外部接続元CIDRと **VMの公開IPv4 /32** を設定します。`0.0.0.0/0` を指定した場合、ACLはこのCIDRのみになります。VMからADBへの通信はInternet Gatewayを経由します。VMを置換して公開IPが変わった場合も、接続元を限定していれば同じApplyでADB ACLを更新します。ADBアクセスの可否はVMのSecurity Listだけでなく、このADB側ACLでも制御します。
 
 公開サブネットの同じルート表にInternet Gatewayと「All Services」宛てService Gatewayは併用できないため、Service Gatewayは作成しません。[Oracleの既知のネットワーク制約](https://docs.oracle.com/en-us/iaas/Content/Network/Reference/known_issues_for_networking.htm)
 
@@ -113,7 +113,7 @@ Folderを使う場合は、**配布用ZIPを空のフォルダへ展開し、そ
 | Codexバージョン | 既定 `latest`。必要なら公式配布の固定バージョン |
 | Ansible再実行番号 | 既定 `1`。成功済みの同じ設定を再実行したいときに変更 |
 
-接続元CIDRの入力は必須で、`0.0.0.0/0`、IPv6、不正なCIDRを拒否します。自宅等のグローバルIPが変わった場合はスタック変数を変更し、Plan/ApplyでSecurity ListとADB ACLを更新してください。
+接続元CIDRの入力は必須で、IPv6と不正なCIDRを拒否します。`0.0.0.0/0` も指定でき、その場合はVMのSSH（TCP 22）とADBの公開エンドポイントを全IPv4からアクセス可能にします。検証後は接続元を絞ったCIDRへ戻し、Plan/ApplyでSecurity ListとADB ACLを更新してください。自宅等のグローバルIPが変わった場合も、同様にスタック変数を更新してください。
 
 イメージのOCIDは選択した値に固定します。次回Apply時に「最新イメージ」が変わったという理由だけでVMが置換されることを防ぎます。フォームで候補が表示されない場合は、コンパートメントのイメージ参照権限と、そのリージョンのA1対応OL8イメージを確認してください。
 

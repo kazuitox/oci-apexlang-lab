@@ -357,8 +357,14 @@ locals {
                 self.assertEqual(capacity["cpu_core_count"], 1 if free else None)
                 self.assertEqual(capacity["compute_count"], None if free else 2)
 
-    def test_terraform_rejects_invalid_or_world_open_cidrs(self):
-        for cidr in ("0.0.0.0/0", "", "::/0", "203.0.113.300/32", "203.0.113.1", "203.0.113.10/32,", "203.0.113.10/32,0.0.0.0/0"):
+    def test_terraform_accepts_world_open_cidr_and_passes_it_to_adb_acl(self):
+        self.run_tf("plan", "-input=false", "-lock=false", "-var=allowed_client_cidrs=0.0.0.0/0")
+        result = self.run_tf("console", "-var=allowed_client_cidrs=0.0.0.0/0",
+                             text_input="jsonencode(local.adb_allowed_cidrs)\n")
+        self.assertEqual(json.loads(json.loads(result.stdout)), ["0.0.0.0/0"])
+
+    def test_terraform_rejects_invalid_cidrs(self):
+        for cidr in ("", "::/0", "203.0.113.300/32", "203.0.113.1", "203.0.113.10/32,"):
             with self.subTest(cidr=cidr):
                 result = self.run_tf("plan", "-input=false", "-lock=false", f"-var=allowed_client_cidrs={cidr}", check=False)
                 self.assertNotEqual(result.returncode, 0)

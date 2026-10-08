@@ -90,7 +90,7 @@ variables:
     description: >-
       必須。例 203.0.113.10/32。複数はカンマ区切り。
       自宅・会社の実際のグローバルIPへ置き換えてください。
-      SSHおよびADBのSQL/APEXに共通適用。0.0.0.0/0は禁止。
+      SSHおよびADBのSQL/APEXに共通適用。0.0.0.0/0は全IPv4からの接続を許可します。
     required: true
   vcn_cidr:
     type: string

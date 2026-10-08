@@ -54,13 +54,13 @@ variable "ssh_public_key" {
 
 variable "allowed_client_cidrs" {
   type        = string
-  description = "VMのSSHとADBのSQL/APEXへの接続を許可するグローバルIPv4 CIDR。複数はカンマ区切り。0.0.0.0/0は禁止。"
+  description = "VMのSSHとADBのSQL/APEXへの接続を許可するIPv4 CIDR。複数はカンマ区切り。0.0.0.0/0は全IPv4からの接続を許可します。"
   validation {
     condition = alltrue([
       for entry in split(",", var.allowed_client_cidrs) :
-      can(cidrnetmask(trimspace(entry))) && try(tonumber(split("/", trimspace(entry))[1]) > 0, false)
+      can(cidrnetmask(trimspace(entry)))
     ])
-    error_message = "有効なIPv4 CIDRをカンマ区切りで指定してください。例: 203.0.113.10/32。全公開の/0は使用できません。"
+    error_message = "有効なIPv4 CIDRをカンマ区切りで指定してください。例: 203.0.113.10/32、0.0.0.0/0。"
   }
 }
 
