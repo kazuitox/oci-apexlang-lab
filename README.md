@@ -1,8 +1,8 @@
 # OCI APEXlang 学習ラボ
 
-[![Deploy to Oracle Cloud](https://oci-resourcemanager-plugin.plugins.oci.oraclecloud.com/latest/deploy-to-oracle-cloud.svg)](https://cloud.oracle.com/resourcemanager/stacks/create?zipUrl=https://github.com/kazuitox/oci-apexlang-lab/archive/refs/tags/v1.5.1.zip)
+[![Deploy to Oracle Cloud](https://oci-resourcemanager-plugin.plugins.oci.oraclecloud.com/latest/deploy-to-oracle-cloud.svg)](https://cloud.oracle.com/resourcemanager/stacks/create?zipUrl=https://github.com/kazuitox/oci-apexlang-lab/archive/refs/heads/main.zip)
 
-APEXlangを学習・実験するための環境を、OCI Resource Managerから構築するTerraformテンプレートです。上のボタンから **v1.5.1** のスタック作成画面を開くか、配布ZIPをアップロードして開始できます。必要な値を入力し、Planで確認してからApplyしてください。
+APEXlangを学習・実験するための環境を、OCI Resource Managerから構築するTerraformテンプレートです。上のボタンから **mainブランチの最新版** でスタック作成画面を開くか、配布ZIPをアップロードして開始できます。必要な値を入力し、Planで確認してからApplyしてください。既存スタックでは構成ZIPも更新してください。
 
 指定した接続元CIDRから、開発VMへSSH、ADBへSQLcl・APEX・Database Actionsで直接アクセスできます。VMとADB、ネットワークをOCIに配置します。Codex CLIの推論先はOpenAIのサービスです。**既定は有料構成で、大阪などホームリージョン以外でも利用できます。** Always Freeは入力フォームで選択できます。
 
@@ -44,7 +44,7 @@ ADBは公開エンドポイントです。ADBのアクセス制御リスト（AC
 | RM Private Endpoint → VM | RM専用サブネットからVMへのTCP 22。Endpoint側の送信先はVMのプライベートIP /32のみ |
 | 外部 → VM | 入力したIPv4 CIDRからのTCP 22のみ |
 | 外部 → ADB | 入力したIPv4 CIDR。HTTPS 443およびmTLS 1522。DB接続にはWalletとDB認証も必要 |
-| VM → ADB | TCP 1522の送信を許可。送信先は動的なADB公開エンドポイントに対応するため0.0.0.0/0、ADB側ACLはVM公開IP /32に限定。HTTPSは共通443ルールで許可 |
+| VM → ADB | TCP 1522の送信を許可。送信先は動的なADB公開エンドポイントに対応するため0.0.0.0/0。ADB側ACLは通常VM公開IP /32も許可し、接続元に0.0.0.0/0を指定した場合は全IPv4を許可。HTTPSは共通443ルールで許可 |
 | VM → 外部 | TCP 80/443。OSパッケージ、ツール、GitHub、OCI API、OpenAIへの通信 |
 | VM → OCIローカルサービス | 169.254.169.254へのDNS UDP/TCP 53、NTP UDP 123 |
 | その他のVM着信 | Path MTU Discovery用ICMP Type 3 Code 4のみ、送信元を限定せず許可 |
@@ -84,7 +84,7 @@ SQLclはArm64 JDKでZIP版を実行します。Oracle Linux 8向けArm64のSQLcl
 
 1. 配置先リージョンを選び、既存のコンパートメントを用意します。大阪で有料構成を使用する場合は `ap-osaka-1`、`use_always_free = false` とします。Always Freeを選ぶ場合のみホームリージョンを使用します。
 2. README冒頭の **Deploy to Oracle Cloud** ボタンをクリックします。手動でアップロードする場合は、リポジトリを取得して `python3 scripts/build_zip.py` を実行し、Resource Manager → スタック → スタックの作成 → ZIPアップロードで、`dist/apexlang-oci-resource-manager.zip` を選びます。
-3. Terraformは **1.5.x** を選択します。この構成は1.5.7で検証しています。ボタンが参照するGitHubのタグZIPでは、`oci-apexlang-lab-1.5.1/` に `.tf` と `schema.yaml` があります。作業ディレクトリにはこれらのファイルがあるフォルダを指定します。`scripts/build_zip.py` で作成した配布ZIPではZIPのルートにあります。[Resource Manager対応バージョン](https://docs.oracle.com/en-us/iaas/Content/ResourceManager/Reference/terraformversions.htm)
+3. Terraformは **1.5.x** を選択します。この構成は1.5.7で検証しています。ボタンが参照するGitHubのブランチZIPでは、`oci-apexlang-lab-main/` に `.tf` と `schema.yaml` があります。作業ディレクトリにはこれらのファイルがあるフォルダを指定します。`scripts/build_zip.py` で作成した配布ZIPではZIPのルートにあります。[Resource Manager対応バージョン](https://docs.oracle.com/en-us/iaas/Content/ResourceManager/Reference/terraformversions.htm)
 4. 次の値を入力します。テナンシOCID・リージョンはResource Managerが設定します。
 5. **Plan**で確認し、**Apply**します。ApplyログにAnsibleのTASKとPLAY RECAPが表示されます。ツール・Wallet・TCP接続検証の完了後にApplyが成功します（Wallet自動取得を無効にした場合はツール確認まで）。
 
@@ -114,6 +114,8 @@ Folderを使う場合は、**配布用ZIPを空のフォルダへ展開し、そ
 | Ansible再実行番号 | 既定 `1`。成功済みの同じ設定を再実行したいときに変更 |
 
 接続元CIDRの入力は必須で、IPv6と不正なCIDRを拒否します。`0.0.0.0/0` も指定でき、その場合はVMのSSH（TCP 22）とADBの公開エンドポイントを全IPv4からアクセス可能にします。検証後は接続元を絞ったCIDRへ戻し、Plan/ApplyでSecurity ListとADB ACLを更新してください。自宅等のグローバルIPが変わった場合も、同様にスタック変数を更新してください。
+
+**既存スタックで旧エラー文言が出る場合**：変数だけでなく、スタックのTerraform構成が旧版です。同じスタックを「編集」し、構成ソースの「.Zipファイル」へ `dist/apexlang-oci-resource-manager.zip` をアップロードして保存してください。ZIPは最新のソースから `python3 scripts/build_zip.py` で再生成します。変数を `0.0.0.0/0` に更新した後、Planで変更内容を確認してApplyします。スタックを新規作成するとTerraform stateが別になるため、既存環境の変更には同じスタックを使用してください。[Oracleのスタック構成更新手順](https://docs.oracle.com/en-us/iaas/Content/ResourceManager/Tasks/update-stack-tf-config.htm)
 
 イメージのOCIDは選択した値に固定します。次回Apply時に「最新イメージ」が変わったという理由だけでVMが置換されることを防ぎます。フォームで候補が表示されない場合は、コンパートメントのイメージ参照権限と、そのリージョンのA1対応OL8イメージを確認してください。
 
